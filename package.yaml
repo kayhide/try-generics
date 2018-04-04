@@ -85,3 +85,10 @@ executables:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+
+tests:
+  doctest:
+    source-dirs:      test
+    main:             doctest.hs
+    dependencies:
+    - doctest
