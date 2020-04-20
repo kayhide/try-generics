@@ -199,6 +199,35 @@ instance (Union l r u, u ~ Append l r) => Union (x ': l) r (x ': u) where
   ununion (RCons x xs) = first (RCons x) $ ununion xs
 
 
+-- * Nub typeclass
+
+-- |
+-- >>> toRec $ from (Keyed @"x" 42.0, Keyed @"x" 56.4)
+-- x: 42.0, x: 56.4, _
+-- >>> nub $ toRec $ from (Keyed @"x" 42.0, Keyed @"x" 56.4) :: Rec '[ '("x", Double)]
+-- x: 42.0, _
+class Nub s t where
+  nub :: Rec s -> Rec t
+
+instance Nub s '[] where
+  nub x = RNil
+
+instance (Nub s t, HasField s k v) => Nub s ('(k, v) ': t) where
+  nub x = RCons (getField x) $ nub x
+
+
+class HasField r k v where
+  getField :: Rec r -> Keyed k v
+
+instance {-# OVERLAPS #-} HasField ('(k, v) ': rs) k v where
+  getField (RCons x _) = x
+
+instance HasField rs k v => HasField (r ': rs) k v where
+  getField (RCons _ xs) = getField xs
+
+
+-- * Tests
+
 -- | Round trip of Point to/from Rec
 -- >>> to @Point $ fromRec $ toRec $ from pt
 -- Point {x = 1.2, y = 8.3}
@@ -207,6 +236,24 @@ instance (Union l r u, u ~ Append l r) => Union (x ': l) r (x ': u) where
 -- >>> data Point3d = Point3d { x :: Double, y :: Double, z :: Double } deriving (Show, Generic)
 -- >>> to @Point3d $ fromRec $ union (toRec $ from pt) (toRec $ from (Keyed @"z" 42.0))
 -- Point3d {x = 1.2, y = 8.3, z = 42.0}
+
+
+-- |
+-- >>> f $ toRec $ from (Keyed @"x" 3.5)
+-- Point {x = 3.5, y = 0.0}
+--
+-- >>> f $ toRec $ from (Keyed @"x" 3.5, Keyed @"y" 4.3)
+-- Point {x = 3.5, y = 4.3}
+type PointRow = RowTy (Rep Point)
+
+f ::
+  ( Union props PointRow props'
+  , Nub props' PointRow
+  ) => Rec props -> Point
+f props = to $ fromRec $ nub $ union props def
+  where
+    def :: Rec PointRow
+    def = toRec $ from $ Point 0.0 0.0
 
 
 main :: IO ()
