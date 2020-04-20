@@ -91,28 +91,38 @@ type instance Append '[] ys = ys
 type instance Append (x ': xs) ys = x ': Append xs ys
 
 
+type FIELD = (Symbol, Type)
 
 -- |
 -- >>> :kind! RowTy (Rep Point)
 -- RowTy (Rep Point) :: [(Symbol, *)]
 -- = '[ '("x", Double), '("y", Double)]
+--
+-- >>> toRec $ from pt
+-- x: 1.2, y: 8.3, _
 class Row f where
-  type RowTy f :: [(Symbol, Type)]
+  type RowTy f :: [FIELD]
+  toRec :: f a -> Rec (RowTy f)
 
 instance Row f => Row (D1 i f) where
   type RowTy (D1 i f) = RowTy f
+  toRec (M1 x) = toRec x
 
 instance Row f => Row (C1 i f) where
   type RowTy (C1 i f) = RowTy f
+  toRec (M1 x) = toRec x
 
 instance (Row a, Row b) => Row (a :*: b) where
   type RowTy (a :*: b) = Append (RowTy a) (RowTy b)
+  toRec (x :*: y) = union (toRec x) (toRec y)
 
-instance KnownSymbol key => Row (S1 ('MetaSel ('Just (key :: Symbol)) su ss ds) (Rec0 (a :: Type))) where
+instance Row (S1 ('MetaSel ('Just (key :: Symbol)) su ss ds) (Rec0 (a :: Type))) where
   type RowTy (S1 ('MetaSel ('Just key) su ss ds) (Rec0 a)) = '[ '(key, a) ]
+  toRec (M1 (K1 x)) = RCons (Keyed x) RNil
 
-instance KnownSymbol key => Row (S1 ('MetaSel 'Nothing su ss ds) (Rec0 (Keyed key a))) where
+instance Row (S1 ('MetaSel 'Nothing su ss ds) (Rec0 (Keyed key a))) where
   type RowTy (S1 ('MetaSel 'Nothing su ss ds) (Rec0 (Keyed key a))) = '[ '(key, a) ]
+  toRec (M1 (K1 x)) = RCons x RNil
 
 
 
@@ -123,35 +133,50 @@ instance KnownSymbol key => Row (S1 ('MetaSel 'Nothing su ss ds) (Rec0 (Keyed ke
 -- RCons x (RCons y RNil) :: Rec '[ '("x", Double), '("y", Double)]
 --
 -- >>> (x, y)
--- (Keyed 3.5,Keyed 4.8)
+-- (x: 3.5,y: 4.8)
+--
+-- >>> toRec $ from (x, y)
+-- x: 3.5, y: 4.8, _
 --
 -- >>> keys x
 -- ["x"]
 --
 -- >>> keys (x, y)
 -- ["x","y"]
+--
 
 newtype Keyed (k :: Symbol) (a :: Type) = Keyed a
-  deriving (Eq, Show)
+  deriving (Eq)
+
+instance (KnownSymbol k, Show a) => Show (Keyed k a) where
+  show (Keyed x) = symbolVal (Proxy @k) <> ": " <> show x
+
 
 instance Generic (Keyed k a) where
   type Rep (Keyed k a) = S1 ('MetaSel ('Just k) 'NoSourceUnpackedness 'NoSourceStrictness 'DecidedLazy) (Rec0 a)
   from (Keyed x) = M1 (K1 x)
   to (M1 (K1 x)) = Keyed x
 
-data Rec (row :: [(Symbol, Type)]) where
+
+data Rec (row :: [FIELD]) where
   RNil :: Rec '[]
   RCons :: Keyed k a -> Rec xs -> Rec ('(k, a) ': xs)
 
 
+instance Show (Rec '[]) where
+  show _ = "_"
 
--- class Union l r u where
---   type UnionTy l r :: [(Symbol, k)]
---   union :: l -> r -> u
+instance (KnownSymbol k, Show a, Show (Rec xs)) => Show (Rec ('(k, a) ': xs)) where
+  show (RCons x xs) = show x <> ", " <> show xs
 
--- instance (Row l, Row r, Row u) => Union l r u where
---   type UnionTy l r = Append (RowTy l) (RowTy r)
---   union x y = _
+-- |
+-- >>> union (toRec $ from pt) (toRec $ from (Keyed @"z" 42.0))
+-- x: 1.2, y: 8.3, z: 42.0, _
+union :: Rec l -> Rec r -> Rec (Append l r)
+union l r = case l of
+  RNil -> r
+  RCons x xs -> RCons x (union xs r)
+
 
 main :: IO ()
 main = do
