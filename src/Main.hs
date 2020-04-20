@@ -7,6 +7,7 @@ module Main where
 -- import ClassyPrelude
 import Prelude
 
+import Control.Arrow ((***), first)
 import Data.Proxy
 import Data.Kind
 import GHC.Generics
@@ -97,34 +98,38 @@ type FIELD = (Symbol, Type)
 -- >>> :kind! RowTy (Rep Point)
 -- RowTy (Rep Point) :: [(Symbol, *)]
 -- = '[ '("x", Double), '("y", Double)]
---
--- >>> toRec $ from pt
--- x: 1.2, y: 8.3, _
 class Row f where
   type RowTy f :: [FIELD]
   toRec :: f a -> Rec (RowTy f)
+  fromRec :: Rec (RowTy f) -> f a
 
 instance Row f => Row (D1 i f) where
   type RowTy (D1 i f) = RowTy f
   toRec (M1 x) = toRec x
+  fromRec = M1 . fromRec
 
 instance Row f => Row (C1 i f) where
   type RowTy (C1 i f) = RowTy f
   toRec (M1 x) = toRec x
+  fromRec = M1 . fromRec
 
-instance (Row a, Row b) => Row (a :*: b) where
+instance (Row a, Row b, l ~ RowTy a, r ~ RowTy b, u ~ Append l r, Union l r u) => Row (a :*: b) where
   type RowTy (a :*: b) = Append (RowTy a) (RowTy b)
   toRec (x :*: y) = union (toRec x) (toRec y)
+  fromRec = uncurry (:*:) . (fromRec *** fromRec) . ununion
 
 instance Row (S1 ('MetaSel ('Just (key :: Symbol)) su ss ds) (Rec0 (a :: Type))) where
   type RowTy (S1 ('MetaSel ('Just key) su ss ds) (Rec0 a)) = '[ '(key, a) ]
   toRec (M1 (K1 x)) = RCons (Keyed x) RNil
+  fromRec (RCons (Keyed x) RNil) = M1 $ K1 x
 
 instance Row (S1 ('MetaSel 'Nothing su ss ds) (Rec0 (Keyed key a))) where
   type RowTy (S1 ('MetaSel 'Nothing su ss ds) (Rec0 (Keyed key a))) = '[ '(key, a) ]
   toRec (M1 (K1 x)) = RCons x RNil
+  fromRec (RCons x RNil) = M1 $ K1 x
 
 
+-- * Value type tagged by @Symbol@
 
 -- |
 -- >>> x = Keyed @"x" @Double 3.5
@@ -151,17 +156,17 @@ newtype Keyed (k :: Symbol) (a :: Type) = Keyed a
 instance (KnownSymbol k, Show a) => Show (Keyed k a) where
   show (Keyed x) = symbolVal (Proxy @k) <> ": " <> show x
 
-
 instance Generic (Keyed k a) where
   type Rep (Keyed k a) = S1 ('MetaSel ('Just k) 'NoSourceUnpackedness 'NoSourceStrictness 'DecidedLazy) (Rec0 a)
   from (Keyed x) = M1 (K1 x)
   to (M1 (K1 x)) = Keyed x
 
 
+-- * Heterogeneous associated list
+
 data Rec (row :: [FIELD]) where
   RNil :: Rec '[]
   RCons :: Keyed k a -> Rec xs -> Rec ('(k, a) ': xs)
-
 
 instance Show (Rec '[]) where
   show _ = "_"
@@ -169,19 +174,41 @@ instance Show (Rec '[]) where
 instance (KnownSymbol k, Show a, Show (Rec xs)) => Show (Rec ('(k, a) ': xs)) where
   show (RCons x xs) = show x <> ", " <> show xs
 
+
+-- * Union typeclass
+
 -- |
 -- >>> union (toRec $ from pt) (toRec $ from (Keyed @"z" 42.0))
 -- x: 1.2, y: 8.3, z: 42.0, _
-union :: Rec l -> Rec r -> Rec (Append l r)
-union l r = case l of
-  RNil -> r
-  RCons x xs -> RCons x (union xs r)
+
+-- |
+-- >>> ununion (toRec $ from pt) :: (Rec '[ '("x", Double)], Rec '[ '("y", Double)])
+-- (x: 1.2, _,y: 8.3, _)
+-- >>> ununion (toRec $ from pt) :: (Rec '[], Rec '[ '("x", Double), '("y", Double)])
+-- (_,x: 1.2, y: 8.3, _)
+class Union l r u | l r -> u where
+  union :: Rec l -> Rec r -> Rec u
+  ununion :: Rec u -> (Rec l, Rec r)
+
+instance Union '[] r r where
+  union _ r = r
+  ununion x = (RNil, x)
+
+instance (Union l r u, u ~ Append l r) => Union (x ': l) r (x ': u) where
+  union (RCons x xs) r = RCons x $ union xs r
+  ununion (RCons x xs) = first (RCons x) $ ununion xs
+
+
+-- | Round trip of Point to/from Rec
+-- >>> to @Point $ fromRec $ toRec $ from pt
+-- Point {x = 1.2, y = 8.3}
+
+-- | Converting Point to Point3d by adding z field
+-- >>> data Point3d = Point3d { x :: Double, y :: Double, z :: Double } deriving (Show, Generic)
+-- >>> to @Point3d $ fromRec $ union (toRec $ from pt) (toRec $ from (Keyed @"z" 42.0))
+-- Point3d {x = 1.2, y = 8.3, z = 42.0}
 
 
 main :: IO ()
 main = do
-  print $ from pt
-  let M1 (M1 (rx@(M1 (K1 x)) :*: ry@(M1 (K1 y)))) = from pt
-  print $ (x, y)
-  print $ (to $ M1 $ M1 $ rx :*: ry :: Point)
-  print $ keys pt
+  putStrLn "OK"
