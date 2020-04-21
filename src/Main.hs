@@ -244,6 +244,10 @@ instance HasField rs k v => HasField (r ': rs) k v where
 --
 -- >>> f $ toRec $ from (Keyed @"x" 3.5, Keyed @"y" 4.3)
 -- Point {x = 3.5, y = 4.3}
+--
+-- >>> data Tniop = Tniop { y :: Double, x :: Double } deriving (Show, Generic)
+-- >>> f $ toRec $ from $ Tniop 4.3 3.5
+-- Point {x = 3.5, y = 4.3}
 type PointRow = RowTy (Rep Point)
 
 f ::
